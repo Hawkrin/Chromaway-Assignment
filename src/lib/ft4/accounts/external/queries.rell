@@ -1,0 +1,85 @@
+import acc: ^;
+import utils: ^^.utils;
+
+query get_config() {
+    return (
+        rate_limit = acc.get_rate_limit_config()
+    );
+}
+
+query get_account_rate_limit_last_update(account_id: byte_array) {
+    if (acc.get_rate_limit_config().active == false) return (points = 0, last_update = 0);
+    
+    return acc.rl_state @ { .account.id == account_id }
+    (
+        .points, 
+        .last_update
+    );
+}
+
+query is_auth_descriptor_valid(account_id: byte_array, auth_descriptor_id: byte_array) {
+    return acc.is_valid(acc.account_auth_descriptor @ {
+        .account.id == account_id,
+        .id == auth_descriptor_id
+    });
+}
+
+query _get_account_auth_descriptors(id: byte_array) {
+    return acc.account_auth_descriptor @* {
+        .account.id == id
+    } (
+        auth_type = .auth_type,
+        args = gtv.from_bytes(.args),
+        rules = gtv.from_bytes(.rules)
+    );
+}
+
+query get_account_auth_descriptors(id: byte_array, page_size: integer, page_cursor: text?) {
+    return utils.make_page(
+        acc.get_paginated_auth_descriptors(id, page_size, page_cursor), 
+        page_size
+    );
+}
+
+query get_account_auth_descriptors_by_participant_id(account_id: byte_array, participant_id: byte_array) {
+    return (ad: acc.account_auth_descriptor, p: acc.auth_descriptor_participant) @* {
+        ad.account.id == account_id,
+        p.id == participant_id,
+        ad == p.account_auth_descriptor
+    } (
+        auth_type = ad.auth_type,
+        args = gtv.from_bytes(ad.args),
+        rules = gtv.from_bytes(ad.rules)
+    );
+}
+
+query get_account_by_id(id: byte_array) {
+    return acc.account @? { id } ( .id );
+}
+
+query get_account_by_auth_descriptor(acc.auth_descriptor) {
+    return acc.account @? { .id == auth_descriptor.hash() } ( .id );
+}
+
+query get_accounts_by_participant_id(id: byte_array) {
+    return acc.auth_descriptor_participant @* { id } ( .account_auth_descriptor.account.id );
+}
+
+query _get_accounts_by_auth_descriptor_id(id: byte_array) {
+    return acc.account_auth_descriptor @* { id } ( .account.id );
+}
+
+query get_accounts_by_auth_descriptor_id(id: byte_array, page_size: integer, page_cursor: text?) {
+    return utils.make_page(
+        acc.get_paginated_accounts_by_ad_id(id, page_size, page_cursor),
+        page_size
+    );
+}
+
+query get_auth_descriptor_nonce(
+    account_id: byte_array, 
+    auth_descriptor_id: byte_array
+) = acc.account_auth_descriptor @ { 
+        .account.id == account_id, 
+        .id == auth_descriptor_id 
+    } ( .ctr );

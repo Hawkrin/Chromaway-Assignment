@@ -1,0 +1,105 @@
+module;
+
+import entities.*;
+import functions.*;
+// import ^.lib.ft4.ft4_basic_dev.*; 
+// import lib.auth;
+
+/*
+* Creates a student 
+*/
+operation create_a_student(pubkey, name: text) {
+    //ft4.admin.require_admin();
+    create_student(pubkey, name);
+}
+
+/*
+* Creates a course
+*/
+operation create_a_course(pubkey, name: text, capacity: integer) {
+    //ft4.admin.require_admin();
+    create_course(pubkey, name, capacity);
+}
+
+/*
+* Enrolls the current signed in user to a chosen course, if there are still available spots left.
+* Can only be enrolled if trying to enroll self and there's room in the chosen course.
+*/
+operation enroll_for_course(student_pubkey: pubkey, course_pubkey: pubkey) {
+    require(op_context.is_signer(student_pubkey), "You can only enroll yourself"); // Check if the provided student_pubkey is a signer of the transaction
+
+    val student = student @ { .pubkey == student_pubkey };
+    val course = course @ { .pubkey == course_pubkey };
+
+    if (course_has_room(course)) {
+        create_enrollment(student, course);
+        increment_course_active_students(course);
+    } else {
+        add_student_to_waiting_list(student, course);
+    }
+}
+
+/*
+* Deletes the current user from the course.
+* Fetches the student which is first in the waiting list. And enrolls him/her to the course
+* Deletes that user from the waiting list. 
+*/
+operation drop_course(student_pubkey: pubkey, course_pubkey: pubkey) {
+    require(op_context.is_signer(student_pubkey), "You can only drop yourself from the course"); // Check if the provided student_pubkey is a signer of the transaction
+
+    val student = student @ { .pubkey == student_pubkey };
+    val course = course @ { .pubkey == course_pubkey };
+
+    // Delete the enrollment of the student from the course
+    delete enrollment @ { .student == student, .course == course };
+
+    val waiting_list = course_waiting_list @* { .course == course };
+    if (waiting_list.empty()) {
+        return; 
+    } else {
+        for(waiting_list_entity in waiting_list) {
+            if (waiting_list_entity.position == 1) {
+                val next_student = waiting_list_entity.student;
+
+                create_enrollment(next_student, course);
+                delete course_waiting_list @ { .course == course, .student == next_student }; // deletes the next inline student from the waiting list.
+                break;
+            }
+        } 
+        decrement_waiting_list_positions(course);
+    }
+}
+
+/*
+* Deletes the current user from the course.
+* Fetches the student which is first in the waiting list. And enrolls him/her to the course
+* Deletes that user from the waiting list. 
+*/
+operation drop_course_and_enroll_random_student(student_pubkey: pubkey, course_pubkey: pubkey) {
+    require(op_context.is_signer(student_pubkey), "You can only drop yourself from the course"); // Check if the provided student_pubkey is a signer of the transaction
+
+    val student = student @ { .pubkey == student_pubkey };
+    val course = course @ { .pubkey == course_pubkey };
+
+    // Delete the enrollment of the student from the course
+    delete enrollment @ { .student == student, .course == course };
+
+    val waiting_list = course_waiting_list @* { .course == course };
+    if (waiting_list.empty()) {
+        return; 
+    } else {
+        val random_number = pseudo_randomness(student_pubkey, waiting_list.size());
+        val next_student = course_waiting_list @ { .course == course, .position == random_number }.student;
+
+        create_enrollment(next_student, course);
+        delete course_waiting_list @ { .course == course, .student == next_student }; // deletes the next inline student from the waiting list.
+
+        decrement_waiting_list_positions(course);
+    }
+}
+
+// @extend(ft4.auth.auth_handler)
+// function () = ft4.auth.add_auth_handler(
+//     scope = rell.meta(enroll_for_course).mount_name,
+//     flags = []
+// );

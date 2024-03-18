@@ -1,0 +1,128 @@
+import u: ^.utils;
+
+struct single_sig_args {
+    flags: set<text>;
+    pubkey;
+}
+
+struct multi_sig_args {
+    flags: set<text>;
+    signatures_required: integer;
+    pubkeys: list<pubkey>;
+}
+
+/*
+ * Returns VALID if valid.
+ */
+function check_single_sig_auth(args: byte_array, participants: list<byte_array>, required_flags: list<text>): u.validation_result {
+    if(participants.size() > 1) {
+        return u.invalid("Single sig Auth Descriptor must have only one participant.");
+    }
+    if (participants.size() < 1) {
+        return u.invalid("Single sig Auth Descriptor's participant list is empty.");
+    }
+
+    val ss_args = single_sig_args.from_bytes(args);
+    if ( check_required_flags(ss_args.flags, required_flags)) {
+        if (op_context.is_signer(participants[0])) {
+            return u.VALID;
+        } else {
+            return u.invalid("The participant is not the signer of this transaction.");
+        }
+    } else {
+        return u.invalid("Some required flags " + required_flags.to_text() + " are missing on the (single sig) Auth Descriptor.");
+    }
+}
+
+/*
+ * Returns VALID if valid.
+ */
+function check_multi_sig_auth(args: byte_array, participants: list<byte_array>, required_flags: list<text>): u.validation_result {
+    val multi_sign_args = multi_sig_args.from_bytes(args);
+    if (not (check_required_flags(multi_sign_args.flags, required_flags))) {
+       return u.invalid("Some required flags " + required_flags.to_text() + " are missing on the (multi sig) Auth Descriptor.");
+    }
+    var num_sign = multi_sign_args.signatures_required;
+    for(s in participants) {
+        if(op_context.is_signer(s)) {
+            num_sign -= 1;
+            if(num_sign < 1) {
+                return u.VALID;
+            }
+        }
+    }
+    return u.invalid("Transaction must be signed by at least " + multi_sign_args.signatures_required + " participants in the Auth Descriptor.");
+}
+
+/*
+ * Returns false if any of the required flags are missing from the "flags" set.
+ */
+function check_required_flags(flags: set<text>, required_flags: list<text>): boolean {
+    return flags.contains_all(required_flags);
+}
+
+/*
+ * Returns the set of flags found in the "args" parameter.
+ */
+function get_flags_from_args(a_t: auth_type, args: byte_array): set<text> {
+    when (a_t) {
+        S -> {
+            return single_sig_args.from_bytes(args).flags;
+        }
+        M -> {
+            return multi_sig_args.from_bytes(args).flags;
+        }
+        else -> {
+            val f = set<text>();
+            return f;
+        }
+    }
+}
+
+/*
+ * Returns VALID if authentication arguments are valid.
+ */
+function check_auth_args(a_t: auth_type, args: byte_array, participants: list<byte_array>, required_flags: list<text>): u.validation_result {
+    return when (a_t) {
+        S -> check_single_sig_auth(args, participants, required_flags);
+        M -> check_multi_sig_auth(args, participants, required_flags);
+        else -> u.invalid("Don't recognize authentication type (S or M).");
+    };
+}
+
+/*
+ * Will:
+ * 1. Explode if any expiry rule is broken.
+ * 2. Explode if required flags are missing on the Auth Desc.
+ * 3. Update the expiry rule values.
+ * 4. Clean away expired Auth Descs on the account.
+ */
+function require_auth(account, account_auth_descriptor, required_flags: list<text>) {
+	require(is_valid(account_auth_descriptor), "Invalid Auth Descriptor structure.");
+
+	val result: u.validation_result = check_auth_args(
+       		account_auth_descriptor.auth_type,
+       		account_auth_descriptor.args,
+            get_participants(account_auth_descriptor.auth_type, account_auth_descriptor.args),
+       		//auth_descriptor_participant @* { account_auth_descriptor } ( .id ),
+       		required_flags
+	);
+
+    require(result.valid, result.error!!); // Prints a precise error message.
+
+    update_auth_descriptor_rule_variables(account_auth_descriptor);
+    delete_expired_auth_descriptors(account);
+}
+
+function get_participants(a_t: auth_type, args: byte_array): list<byte_array>{
+    var participants: list<byte_array>? = null;
+    if (a_t == auth_type.S or a_t == auth_type.ES){
+        participants = [single_sig_args.from_bytes(args).pubkey];
+    }
+    if (a_t == auth_type.M or a_t == auth_type.EM) {
+        participants = multi_sig_args.from_bytes(args).pubkeys;
+    }
+    //TODO: add extendable callback for custom types
+    return require(participants, "Unknown auth_descriptor type"); // or return empty list?
+}
+

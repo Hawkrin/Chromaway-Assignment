@@ -1,0 +1,76 @@
+import acc: ^.accounts;
+import ^.assets;
+import ^.utils;
+
+@log entity transfer_history_entry {
+    index acc.account, asset;
+    delta: big_integer;
+
+    // helps to locate exact position of transfer entry in transaction
+    op_index: integer;
+    is_input: boolean;
+    entry_index: integer;
+    transfer_args: byte_array;
+}
+
+enum transfer_type {
+    sent,
+    received,
+}
+
+struct filter {
+    transfer_type?;
+}
+
+function extract_data_from_transfer_history_list(
+        entries: list<transfer_history_entry>
+    ): list<(data:gtv,rowid:rowid)> {
+    return entries @* {} (
+        data = extract_data_from_transfer_history_entry($).to_gtv_pretty(),
+        rowid = .rowid
+    );
+}
+
+function extract_operation_name(entry: transfer_history_entry): text {
+    val gtx = gtx_transaction.from_gtv(gtv.from_bytes(entry.transaction.tx_data));
+    return gtx.body.operations[entry.op_index].name;
+}
+
+function extract_data_from_transfer_history_entry(entry: transfer_history_entry) {
+    return (
+        id = entry.rowid,
+        delta = entry.delta,
+        decimals = entry.asset.decimals,
+        asset = entry.asset.name,
+        asset_id = entry.asset.id,
+        is_input = entry.is_input,
+        timestamp = entry.transaction.block.timestamp,
+        block_height = entry.transaction.block.block_height,
+        entry_index = entry.entry_index,
+        transfer_args = entry.transfer_args,
+        tx_rid = entry.transaction.tx_rid,
+        tx_data = entry.transaction.tx_data,
+        operation_name = extract_operation_name(entry)
+    );
+}
+
+function get_paginated_transfers(acc.account, filter, page_size: integer, page_cursor: text?) {
+    var before_rowid: rowid? = null;
+    if (page_cursor??) {
+        val cursor = utils.decode_cursor(page_cursor);
+        before_rowid = cursor.before_rowid;
+    }
+
+    val entries = transfer_history_entry @* {
+        account,
+        if (filter.transfer_type == null) true else .is_input == (filter.transfer_type!! == transfer_type.sent), 
+        if (before_rowid??) (.rowid < before_rowid) else true
+    } (@sort_desc $) limit utils.fetch_data_size(page_size);
+    
+    return extract_data_from_transfer_history_list(entries) @* {} (
+        utils.pagination_result(
+            data = .data,
+            rowid = .rowid
+        )
+    );
+}

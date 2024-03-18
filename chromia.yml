@@ -1,0 +1,45 @@
+blockchains:
+  chromaway_excersize:
+    module: main
+#     moduleArgs:
+#       lib.ft4.admin:
+#         admin_pubkey: 021BDE85122D0C3B07185BE776F39543318297233F9DFF94C17E7508C216C9AE79
+#       lib.ft4.accounts:
+#         max_auth_descriptor_rules: 4
+#         auth_pubkey: 03433D340F8D6F69730F3E0FAFC0D16FF160F820C2DA2DFC3B3FAD1A075C6EF18E
+#         rate_limit:
+#           max_points: 10
+#           recovery_time: 5000
+#           points_at_account_creation: 1
+#         rate_limit_active: true
+#         rate_limit_max_points: 10
+#         rate_limit_recovery_time: 5000
+#         rate_limit_points_at_account_creation: 1
+#       lib.auth:
+#         auth_pubkey: 03433D340F8D6F69730F3E0FAFC0D16FF160F820C2DA2DFC3B3FAD1A075C6EF18E
+
+# libs:
+#   auth:
+#     registry: https://bitbucket.org/chromawallet/auth-server-ft4.git
+#     path: rell/src/auth
+#     tagOrBranch: main
+#     rid: x"DA98A373F76A1B0169B26BA1BC300B8F647372B7F7A3D472CCB6446BD2ED2E84"
+#     insecure: false
+
+#   ft4:
+#     registry: https://bitbucket.org/chromawallet/ft3-lib
+#     path: rell/src/lib/ft4
+#     tagOrBranch: v0.1.0r
+#     rid: x"66BFCFD1A45D58EAB38F167C97259A633E272A6F995860949BCF8EBA69303744"
+#     insecure: false
+
+compile:
+  rellVersion: 0.12.0
+database:
+
+  schema: schema_chromaway_excersize
+  host: host.docker.internal
+
+test:
+  modules:
+    - test

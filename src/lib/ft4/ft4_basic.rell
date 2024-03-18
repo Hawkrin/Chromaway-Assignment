@@ -1,0 +1,9 @@
+module;
+
+namespace ft4 {
+    import acc: ^.accounts;
+    import acc_ext: ^.accounts.external;
+    import assets_ext: ^.assets.external;
+    import ^.version;
+}
+

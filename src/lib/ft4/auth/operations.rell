@@ -1,0 +1,11 @@
+
+operation evm_auth(
+    account_id: byte_array,
+    auth_descriptor_id: byte_array,
+    signatures: list<signature>
+) {}
+
+operation ft_auth(
+    account_id: byte_array,
+    auth_descriptor_id: byte_array
+) {}

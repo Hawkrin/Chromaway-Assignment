@@ -1,0 +1,8 @@
+
+function authenticate() {
+    val op = op_context.get_all_operations()[op_context.op_index];
+    val flags = get_auth_flags(op.name);
+    // FIXME: call from evm auth handler instead from this place
+    val message = get_auth_message_template(op.name, op.args.to_gtv());
+    return accounts._authenticate(set(flags), message);
+}

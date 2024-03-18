@@ -1,0 +1,64 @@
+import acc: ^^.accounts;
+import ^^.assets;
+import ^^.auth;
+
+
+function delete_auth_descriptor_message(gtv) {
+    val params = struct<delete_auth_descriptor>.from_gtv(gtv);
+    return "Please sign the message\nto delete auth descriptor:\n%s\n\nfrom account\n{account_id}\n\nNonce: {nonce}".format(params.auth_descriptor_id);
+}
+
+@extend(auth.auth_handler)
+function () = auth.add_auth_handler(
+    scope = "ft4.delete_auth_descriptor",
+    flags = ["A"],
+    message = delete_auth_descriptor_message(*)
+);
+
+operation delete_auth_descriptor(auth_descriptor_id: byte_array) {
+    // val flags = if (auth_descriptor_id == delete_descriptor_id) list<text>() else ["A"];
+    val account = auth.authenticate();
+
+    acc._delete_auth_descriptor(
+        acc.auth_descriptor_by_id(account, auth_descriptor_id)
+    );    
+}
+
+function delete_all_auth_descriptors_exclude_message(gtv) {
+    val params = struct<delete_all_auth_descriptors_exclude>.from_gtv(gtv);
+    return "Please sign the message\nto delete all auth descriptors excluding:\n%s\n\n from account:\n{account_id}\n\nNonce: {nonce}".format(params.auth_descriptor_id);
+}
+
+@extend(auth.auth_handler)
+function () = auth.add_auth_handler(
+    scope = "ft4.delete_all_auth_descriptors_exclude",
+    flags = ["A"],
+    message = delete_all_auth_descriptors_exclude_message(*)
+);
+
+operation delete_all_auth_descriptors_exclude(account_id: byte_array, auth_descriptor_id: byte_array) {
+    val account =  acc.account_by_id(account_id);
+    val auth_descriptor = acc.auth_descriptor_by_id(account, auth_descriptor_id);
+    acc._auth(account, auth_descriptor, ["A"]);
+
+    acc._delete_all_auth_descriptors_exclude(auth_descriptor);
+}
+
+function add_auth_descriptor_message(gtv) {
+    val params = struct<add_auth_descriptor>.from_gtv(gtv);
+    val flags = params.new_desc.args[0];
+
+    return "Please sign the message\nto add auth descriptor\nwith flags:\n%s\n\nto account:\n{account_id}\n\nNonce: {nonce}".format(flags);
+}
+
+@extend(auth.auth_handler)
+function () = auth.add_auth_handler(
+    scope = "ft4.add_auth_descriptor",
+    flags = ["A"],
+    message = add_auth_descriptor_message(*)
+);
+
+operation add_auth_descriptor(new_desc: acc.auth_descriptor) {
+    val account = auth.authenticate();
+    acc.add_auth_descriptor_to_account(account, new_desc);
+}

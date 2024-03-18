@@ -1,0 +1,361 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<dict>
+    <entry key="blockstrategy">
+        <dict>
+            <entry key="name">
+                <string>net.postchain.base.BaseBlockBuildingStrategy</string>
+            </entry>
+        </dict>
+    </entry>
+    <entry key="config_consensus_strategy">
+        <string>HEADER_HASH</string>
+    </entry>
+    <entry key="configurationfactory">
+        <string>net.postchain.gtx.GTXBlockchainConfigurationFactory</string>
+    </entry>
+    <entry key="gtx">
+        <dict>
+            <entry key="modules">
+                <array>
+                    <string>net.postchain.rell.module.RellPostchainModuleFactory</string>
+                    <string>net.postchain.gtx.StandardOpsGTXModule</string>
+                </array>
+            </entry>
+            <entry key="rell">
+                <dict>
+                    <entry key="modules">
+                        <array>
+                            <string>main</string>
+                        </array>
+                    </entry>
+                    <entry key="sources">
+                        <dict>
+                            <entry key="auth.rell">
+                                <string>entity account {&#13;
+    key id: byte_array;&#13;
+}&#13;
+&#13;
+entity account_auth_descriptor {&#13;
+    id: byte_array;&#13;
+    key account, id;&#13;
+    index id;&#13;
+   //auth_type;&#13;
+    args: byte_array;&#13;
+    rules: byte_array;&#13;
+    mutable ctr: integer;&#13;
+}&#13;
+&#13;
+entity asset {&#13;
+    key id: byte_array;&#13;
+    name;&#13;
+    key symbol: text;&#13;
+    decimals: integer;&#13;
+    issuing_brid: byte_array;&#13;
+    icon_url: text;&#13;
+    mutable total_supply: big_integer;&#13;
+}&#13;
+&#13;
+entity balance {&#13;
+    key account, asset;&#13;
+    mutable amount: big_integer = 0L;&#13;
+}</string>
+                            </entry>
+                            <entry key="entities.rell">
+                                <string>module;&#13;
+&#13;
+entity student {&#13;
+    key pubkey;&#13;
+    index name: text;&#13;
+}&#13;
+&#13;
+entity course {&#13;
+    key pubkey;&#13;
+    index name: text;&#13;
+    capacity: integer;&#13;
+}&#13;
+&#13;
+entity course_enrollment_count {&#13;
+    key course: course;&#13;
+    mutable active_students: integer;&#13;
+}&#13;
+&#13;
+entity course_waiting_list {&#13;
+    key student, course;&#13;
+    index mutable position: integer;&#13;
+}&#13;
+&#13;
+entity enrollment {&#13;
+    key student, course;&#13;
+}&#13;
+</string>
+                            </entry>
+                            <entry key="functions.rell">
+                                <string>module;&#13;
+&#13;
+import entities.*;&#13;
+&#13;
+/*&#13;
+* Fetching all waiting list entities.&#13;
+* Loops over them and decrements all entities positions by 1.&#13;
+* Updates all entities with their new position.&#13;
+*/&#13;
+function decrement_waiting_list_positions(course: course) {&#13;
+    val waiting_list = course_waiting_list @* { .course == course };&#13;
+    &#13;
+    for(waiting_list_entity in waiting_list) {&#13;
+        var new_position = waiting_list_entity.position - 1;&#13;
+        update course_waiting_list @ { .course == course, .student == waiting_list_entity.student } ( position = new_position );&#13;
+    }&#13;
+}&#13;
+&#13;
+/*&#13;
+* Fetches the size of the waiting list by its position pointer.&#13;
+* Creates a new course_waiting_list and incrementing &#13;
+*/&#13;
+function add_student_to_waiting_list(student: student, course: course) {&#13;
+    val waiting_list_size = (course_waiting_list @* { .course == course }).size();&#13;
+    var last_element = 0;&#13;
+&#13;
+    if (waiting_list_size == 0) {&#13;
+        last_element = 1;&#13;
+    } else {&#13;
+        last_element = waiting_list_size + 1;&#13;
+    }&#13;
+    create_course_waiting_list(course, student, last_element);&#13;
+}&#13;
+&#13;
+/*&#13;
+* Fetches the current amount of active students.&#13;
+* Increments that value by one and then creates a new entity with the new value.&#13;
+* Then deletes the older entity.&#13;
+*/&#13;
+function increment_course_active_students(course: course) {&#13;
+    var current_student_count = get_active_students(course);&#13;
+    var new_student_count = current_student_count + 1;&#13;
+&#13;
+    update course_enrollment_count @ { .course == course } ( active_students = new_student_count );  &#13;
+}&#13;
+&#13;
+/*&#13;
+*  Returns true if there are still places for this course. False otherwise.&#13;
+*/&#13;
+function course_has_room(course)&#13;
+{&#13;
+    var active_students = get_active_students(course);&#13;
+    if(active_students &gt;= course.capacity)&#13;
+    {&#13;
+        return false;&#13;
+    }&#13;
+    return true;&#13;
+}&#13;
+&#13;
+/*&#13;
+* Gets the students of a specified course.&#13;
+*/&#13;
+function get_active_students(course: course): integer =&#13;
+    course_enrollment_count @ { .course == course }.active_students;&#13;
+&#13;
+&#13;
+/*&#13;
+* Creates an enrollemen entity&#13;
+*/&#13;
+function create_enrollment(student: student, course: course) {&#13;
+    create enrollment (&#13;
+        student = student, &#13;
+        course = course&#13;
+    );&#13;
+}&#13;
+&#13;
+/*&#13;
+* Creates a student entity&#13;
+*/&#13;
+function create_student(pubkey, name: text) {&#13;
+    create student (&#13;
+        pubkey, &#13;
+        name = name&#13;
+    );&#13;
+}&#13;
+&#13;
+/*&#13;
+* Creates a course_waiting_list entity&#13;
+*/&#13;
+function create_course_waiting_list(course: course, student: student, position: integer) {&#13;
+    create course_waiting_list (&#13;
+        course = course,&#13;
+        position = position,&#13;
+        student = student  &#13;
+    );&#13;
+}&#13;
+&#13;
+/*&#13;
+* Creates two entities:&#13;
+* The first entity holds the standard course information&#13;
+* The second is connected via a FK and holds the active_students count which can be updated.&#13;
+*/&#13;
+function create_course(pubkey, name: text, capacity: integer) {&#13;
+    create course (&#13;
+        pubkey, &#13;
+        name = name, &#13;
+        capacity = capacity&#13;
+    );&#13;
+&#13;
+    val course = course @ { .name ==  name }; // fetches the right course by name.&#13;
+&#13;
+    create course_enrollment_count (&#13;
+        course = course, &#13;
+        active_students = 0&#13;
+    );&#13;
+}&#13;
+&#13;
+/*&#13;
+* A pseudo random function which takes in an integer and a pubkey&#13;
+*/&#13;
+function pseudo_randomness(pubkey: pubkey, max: integer): integer {&#13;
+    var hashed_key = crypto.sha256(pubkey);&#13;
+    var count = 0;&#13;
+    var total = 0;&#13;
+    var min = 1;&#13;
+&#13;
+    // Include block height and last block time for additional randomness&#13;
+    var random_modifier = op_context.block_height + op_context.last_block_time;&#13;
+&#13;
+    for (letter in hashed_key) {&#13;
+        total += random_modifier % 256;  // Add randomness to each byte&#13;
+        count += 1;&#13;
+    }&#13;
+    &#13;
+    var range = max - min + 1;&#13;
+    return min + (total / count) % range;&#13;
+}&#13;
+&#13;
+&#13;
+&#13;
+&#13;
+&#13;
+</string>
+                            </entry>
+                            <entry key="main.rell">
+                                <string>module;
+
+import entities.*;
+import functions.*;
+// import ^.lib.ft4.ft4_basic_dev.*; 
+// import lib.auth;
+
+/*
+* Creates a student 
+*/
+operation create_a_student(pubkey, name: text) {
+    //ft4.admin.require_admin();
+    create_student(pubkey, name);
+}
+
+/*
+* Creates a course
+*/
+operation create_a_course(pubkey, name: text, capacity: integer) {
+    //ft4.admin.require_admin();
+    create_course(pubkey, name, capacity);
+}
+
+/*
+* Enrolls the current signed in user to a chosen course, if there are still available spots left.
+* Can only be enrolled if trying to enroll self and there's room in the chosen course.
+*/
+operation enroll_for_course(student_pubkey: pubkey, course_pubkey: pubkey) {
+    require(op_context.is_signer(student_pubkey), "You can only enroll yourself"); // Check if the provided student_pubkey is a signer of the transaction
+
+    val student = student @ { .pubkey == student_pubkey };
+    val course = course @ { .pubkey == course_pubkey };
+
+    if (course_has_room(course) == true) {
+        create_enrollment(student, course);
+        increment_course_active_students(course);
+    } else {
+        add_student_to_waiting_list(student, course);
+    }
+}
+
+/*
+* Deletes the current user from the course.
+* Fetches the student which is first in the waiting list. And enrolls him/her to the course
+* Deletes that user from the waiting list. 
+*/
+operation drop_course(student_pubkey: pubkey, course_pubkey: pubkey) {
+    require(op_context.is_signer(student_pubkey), "You can only drop yourself from the course"); // Check if the provided student_pubkey is a signer of the transaction
+
+    val student = student @ { .pubkey == student_pubkey };
+    val course = course @ { .pubkey == course_pubkey };
+
+    // Delete the enrollment of the student from the course
+    delete enrollment @ { .student == student, .course == course };
+
+    val waiting_list = course_waiting_list @* { .course == course };
+    if (waiting_list.empty()) {
+        return; 
+    } else {
+        for(waiting_list_entity in waiting_list) {
+            if (waiting_list_entity.position == 1) {
+                val next_student = waiting_list_entity.student;
+
+                create_enrollment(next_student, course);
+                delete course_waiting_list @ { .course == course, .student == next_student }; // deletes the next inline student from the waiting list.
+                break;
+            }
+        } 
+        decrement_waiting_list_positions(course);
+    }
+}
+
+/*
+* Deletes the current user from the course.
+* Fetches the student which is first in the waiting list. And enrolls him/her to the course
+* Deletes that user from the waiting list. 
+*/
+operation drop_course_and_enroll_random_student(student_pubkey: pubkey, course_pubkey: pubkey) {
+    require(op_context.is_signer(student_pubkey), "You can only drop yourself from the course"); // Check if the provided student_pubkey is a signer of the transaction
+
+    val student = student @ { .pubkey == student_pubkey };
+    val course = course @ { .pubkey == course_pubkey };
+
+    // Delete the enrollment of the student from the course
+    delete enrollment @ { .student == student, .course == course };
+
+    val waiting_list = course_waiting_list @* { .course == course };
+    if (waiting_list.empty()) {
+        return; 
+    } else {
+        val numb = pseudo_randomness(student_pubkey, waiting_list.size());
+        val next_student = course_waiting_list @ { .course == course, .position == numb }.student;
+
+        create_enrollment(next_student, course);
+        delete course_waiting_list @ { .course == course, .student == next_student }; // deletes the next inline student from the waiting list.
+
+        decrement_waiting_list_positions(course);
+    }
+}
+
+// @extend(ft4.auth.auth_handler)
+// function () = ft4.auth.add_auth_handler(
+//     scope = rell.meta(enroll_for_course).mount_name,
+//     flags = []
+// );
+</string>
+                            </entry>
+                        </dict>
+                    </entry>
+                    <entry key="version">
+                        <string>0.12.0</string>
+                    </entry>
+                </dict>
+            </entry>
+        </dict>
+    </entry>
+    <entry key="revolt">
+        <dict>
+            <entry key="fast_revolt_status_timeout">
+                <int>2000</int>
+            </entry>
+        </dict>
+    </entry>
+</dict>

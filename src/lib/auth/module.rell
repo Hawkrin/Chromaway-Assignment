@@ -1,0 +1,52 @@
+@mount("auth")
+module;
+
+import ft4_accounts: lib.ft4.accounts;
+import ft4_auth: lib.ft4.auth;
+
+struct module_args {
+    auth_pubkey: pubkey;
+}
+
+query get_version(): text = "1.0.0r";
+
+query get_message_to_sign() = message_to_sign(chain_context.blockchain_rid);
+
+function message_to_sign(blockchain_rid: byte_array) = "Register an account on blockchain %s".format(blockchain_rid.to_hex().upper_case());
+
+operation register_account(ft4_accounts.auth_descriptor, ft4_auth.signature) {
+  require(
+    op_context.is_signer(chain_context.args.auth_pubkey),
+    "Signature verification failed. Please ensure the request " +
+    "is signed with the correct auth server private key."
+  );
+
+  require(
+    auth_descriptor.auth_type == ft4_accounts.auth_type.S,
+    "Account registration failed. Single-signature auth descriptors expected."
+  );
+
+  val evm_address = byte_array.from_gtv(auth_descriptor.args[1]);
+  val evm_address_size = evm_address.size();
+
+  require(
+    evm_address_size == 20,
+    "EVM address expected inside auth descriptor. Found a byte array of size %d".format(evm_address_size)
+  );
+
+  // val recovered_address = ft4_auth._recover_evm_address(get_message_to_sign(), signature);
+  
+  // require(
+  //   recovered_address == evm_address, 
+  //   "The EVM signer does not match the address in the auth_descriptor."
+  //   +" This could also be caused by having signed a wrong message."
+  //   +" Expected <%s>, found <%s>.".format(evm_address, recovered_address)
+  // );
+
+  before_account_registration(auth_descriptor, signature);
+
+  // Create the account if the signature is valid
+  val account = ft4_accounts.Unsafe.create_account_with_auth(auth_descriptor);
+
+  //after_account_registration(account, auth_descriptor, signature);
+}

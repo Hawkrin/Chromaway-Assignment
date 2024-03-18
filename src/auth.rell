@@ -1,0 +1,28 @@
+entity account {
+    key id: byte_array;
+}
+
+entity account_auth_descriptor {
+    id: byte_array;
+    key account, id;
+    index id;
+   //auth_type;
+    args: byte_array;
+    rules: byte_array;
+    mutable ctr: integer;
+}
+
+entity asset {
+    key id: byte_array;
+    name;
+    key symbol: text;
+    decimals: integer;
+    issuing_brid: byte_array;
+    icon_url: text;
+    mutable total_supply: big_integer;
+}
+
+entity balance {
+    key account, asset;
+    mutable amount: big_integer = 0L;
+}

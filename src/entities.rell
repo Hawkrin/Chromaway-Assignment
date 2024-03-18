@@ -1,0 +1,29 @@
+module;
+
+entity student {
+    key pubkey;
+    index name: text;
+}
+
+entity course {
+    key pubkey;
+    index name: text;
+    capacity: integer;
+}
+
+entity course_enrollment_count {
+    key course;
+    mutable active_students: integer;
+}
+
+entity course_waiting_list {
+    key student, course;
+    index mutable position: integer;
+}
+
+/*
+* Unique Link-table(M2M)
+*/
+entity enrollment {
+    key student, course;
+}

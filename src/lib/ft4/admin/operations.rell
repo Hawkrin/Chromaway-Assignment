@@ -1,0 +1,21 @@
+
+operation register_account(accounts.auth_descriptor) {
+    require_admin();
+    accounts.Unsafe.create_account_with_auth(auth_descriptor);
+}
+
+operation register_asset(name, symbol: text, decimals: integer, icon_url: text) {
+    require_admin();
+    assets.Unsafe.register_asset(name, symbol, decimals, chain_context.blockchain_rid, icon_url);
+}
+
+operation mint(account_id: byte_array, asset_id: byte_array, amount: big_integer) {
+    require_admin();
+    assets.Unsafe.mint(accounts.Account(account_id), assets.Asset(asset_id), amount);
+}
+
+operation add_rate_limit_points(account_id: byte_array, amount: integer) {
+    require_admin();
+	accounts.add_rate_limit_points(accounts.Account(account_id), amount);
+}
+

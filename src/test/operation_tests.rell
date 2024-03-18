@@ -1,0 +1,239 @@
+@test module;
+
+import main.*;
+
+val mock_student_pubkey_3: byte_array = x"031C93326F905FBCC92D5B4DC1F9417DAF7A67018253A2DC1688CCFBF33E29E81F";
+val mock_student_privkey_3: byte_array = x"230592178B1A82221FFB1C93EC1E034A20F1DA7210817C69AC7B257252B0E7D8";
+val mock_student_pubkey_2: byte_array = x"03F581257B9A03C209AADD3D382A61885737ED259CDFE2BE1DB59B156EB751565F";
+val mock_student_privkey_2: byte_array = x"90CF9D86D1BD775D64C86D99FE448026095F826225D8F7DC456B74E957FD6AA0";
+val mock_student_privkey_1: byte_array = x"A4E37A2A4EDFB30F74F7A01D86A4A4079357D3C60092B14B0DF308CD80EE710B";
+val mock_student_pubkey_1: byte_array = x"02125330855A0028516C66F6095DD958AFE90A870C087027BE2D2056E4C2412E19";
+
+val mock_course_privkey_1: byte_array = x"9276AB6C54B488EBAC97FEC258D71FD7FE2E1C3765CCB19E9DD027C986BD85FE";
+val mock_course_pubkey_1: byte_array = x"029B1D26BBCF6BAC904E3FC83DAAEECF3C84213B21A98FF52734AD31F635DC8751";
+val mock_course_privkey_2: byte_array = x"DD198F7AD25B49EA4F044CA5D94721072206B49CCAD0B37279BDEE4B4663B524";
+val mock_course_pubkey_2: byte_array = x"02FD91CCE94849C26841F8D8F78549234EA896A8632D3A7C5006533DAB7E6909AC";
+
+val mock_course_name_1 = "Science";
+val mock_course_name_2 = "Math";
+val mock_course_capacity_1 = 10;
+val mock_course_capacity_2 = 6;
+val mock_course_capacity_3 = 1;
+val mock_student_name_1 = "Thomas";
+val mock_student_name_2 = "Erik";
+val mock_student_name_3 = "Sven";
+
+/*
+* Tests that a student can be created.
+*/
+function test_add_student() {
+    rell.test.tx()
+        .op(create_a_student(mock_student_pubkey_1, mock_student_name_1))
+        .op(create_a_student(mock_student_pubkey_2, mock_student_name_2))
+        .run();
+
+    val all_students = student @* { };
+
+    assert_equals(all_students.size(), 2);
+    assert_equals(all_students[0].name, mock_student_name_1);
+    assert_equals(all_students[1].name, mock_student_name_2);
+    assert_not_equals(all_students[1].name, "Bengt");
+}
+
+/*
+* Tests that a course can be created.
+*/
+function test_add_course() {
+    rell.test.tx()
+        .op(create_a_course(mock_course_pubkey_1, mock_course_name_1, mock_course_capacity_1))
+        .op(create_a_course(mock_course_pubkey_2, mock_course_name_2, mock_course_capacity_2))
+        .run();
+
+    val all_courses = course @* { };
+
+    assert_equals(all_courses.size(), 2);
+    assert_equals(all_courses[0].name, mock_course_name_1);
+    assert_equals(all_courses[1].capacity, mock_course_capacity_2);
+    assert_not_equals(all_courses[1].capacity, 3);
+}
+
+/*
+* Tests that a student can be enrolled to a course.
+*/
+function test_enroll_a_student() {   
+
+    rell.test.tx()
+        .op(create_a_student(mock_student_pubkey_1, mock_student_name_1))
+        .op(create_a_course(mock_course_pubkey_1, mock_course_name_1, mock_course_capacity_1))
+        .sign(mock_student_privkey_1) 
+        .op(enroll_for_course(mock_student_pubkey_1, mock_course_pubkey_1))
+        .run();
+
+    val enrollment = enrollment @* {};
+    val course = course @ { .pubkey == mock_course_pubkey_1 };
+    val student = student @ { .pubkey == mock_student_pubkey_1 };
+
+    assert_equals(enrollment.size(), 1);
+    assert_equals(course, enrollment[0].course);
+    assert_equals(student, enrollment[0].student);
+}
+
+/*
+* Ensures failure when the transcaction isn't signed.
+*/
+function test_enroll_a_student_with_Wrong_pubkey() {   
+
+    val test = rell.test.tx()
+        .op(create_a_student(mock_student_pubkey_1, mock_student_name_1))
+        .op(create_a_course(mock_course_pubkey_1, mock_course_name_1, mock_course_capacity_1))
+        .op(enroll_for_course(mock_student_pubkey_1, mock_course_pubkey_1))
+        .run_must_fail("You can only enroll yourself");
+}
+
+/*
+* Tests that a student is placed in the waiting_list if the course is full.
+*/
+function test_enroll_a_student_to_a_full_course() {   
+
+    rell.test.tx()
+        .op(create_a_student(mock_student_pubkey_1, mock_student_name_1))
+        .op(create_a_course(mock_course_pubkey_1, mock_course_name_1, mock_course_capacity_3))
+        .sign(mock_student_privkey_1) 
+        .op(enroll_for_course(mock_student_pubkey_1, mock_course_pubkey_1))
+        .run();
+
+    rell.test.tx()
+        .op(create_a_student(mock_student_pubkey_2, mock_student_name_1))
+        .sign(mock_student_privkey_2) 
+        .op(enroll_for_course(mock_student_pubkey_2, mock_course_pubkey_1))
+        .run();
+
+    rell.test.tx()
+        .op(create_a_student(mock_student_pubkey_3, mock_student_name_1))
+        .sign(mock_student_privkey_3) 
+        .op(enroll_for_course(mock_student_pubkey_3, mock_course_pubkey_1))
+        .run();
+
+    val enrollment = enrollment @* {};
+    val course = course @ { .pubkey == mock_course_pubkey_1 };
+    var waiting_list_size = course_waiting_list @* { .course == course }.position;
+
+    assert_equals(enrollment.size(), 1);
+    assert_equals(waiting_list_size.size(), 2);
+}
+
+/*
+* Tests that a student can drop out of a course successfully.
+*/
+function test_drop_course() {   
+
+    rell.test.tx()
+        .op(create_a_student(mock_student_pubkey_1, mock_student_name_1))
+        .op(create_a_course(mock_course_pubkey_1, mock_course_name_1, mock_course_capacity_1))
+        .sign(mock_student_privkey_1) 
+        .op(enroll_for_course(mock_student_pubkey_1, mock_course_pubkey_1))
+        .op(drop_course(mock_student_pubkey_1, mock_course_pubkey_1))
+        .run();
+
+    val enrollment = enrollment @* {};
+
+    assert_equals(enrollment.size(), 0);
+}
+
+/*
+* Tests that a student can drop out of a course successfully.
+*/
+function test_drop_course_With_wong_pubkey() {   
+
+    rell.test.tx()
+        .op(create_a_student(mock_student_pubkey_1, mock_student_name_1))
+        .op(create_a_course(mock_course_pubkey_1, mock_course_name_1, mock_course_capacity_1))
+        .op(enroll_for_course(mock_student_pubkey_1, mock_course_pubkey_1))
+        .op(drop_course(mock_student_pubkey_1, mock_course_pubkey_1))
+        .run_must_fail("You can only enroll yourself");
+}
+
+/*
+* Tests that a student from the waiting queue gets to join the course when another student drops out.
+*/
+function test_drop_course_and_let_the_next_student_join() {   
+
+    rell.test.tx()
+        .op(create_a_student(mock_student_pubkey_1, mock_student_name_1))
+        .op(create_a_course(mock_course_pubkey_1, mock_course_name_1, mock_course_capacity_3))
+        .sign(mock_student_privkey_1) 
+        .op(enroll_for_course(mock_student_pubkey_1, mock_course_pubkey_1))
+        .run();
+
+    rell.test.tx()
+        .op(create_a_student(mock_student_pubkey_2, mock_student_name_1))
+        .sign(mock_student_privkey_2) 
+        .op(enroll_for_course(mock_student_pubkey_2, mock_course_pubkey_1))
+        .run();
+
+    rell.test.tx()
+        .op(create_a_student(mock_student_pubkey_3, mock_student_name_1))
+        .sign(mock_student_privkey_3) 
+        .op(enroll_for_course(mock_student_pubkey_3, mock_course_pubkey_1))
+        .run();
+
+    rell.test.tx()
+        .sign(mock_student_privkey_1) 
+        .op(drop_course(mock_student_pubkey_1, mock_course_pubkey_1))
+        .run();
+
+    val enrollment = enrollment @* {};
+    val course = course @ { .pubkey == mock_course_pubkey_1 };
+    var waiting_list_size = course_waiting_list @* { .course == course };
+    val student_2 = student @ { .pubkey == mock_student_pubkey_2 };
+    val student_3 = student @ { .pubkey == mock_student_pubkey_3 };
+
+    assert_equals(enrollment.size(), 1);
+    assert_equals(waiting_list_size.size(), 1);
+    assert_equals(student_2, enrollment[0].student);
+    assert_equals(student_3, waiting_list_size[0].student);
+}
+
+/*
+* Tests that a student from the waiting queue gets to join the course when another student drops out. -> NOT Working
+*/
+function test_drop_course_and_let_a_random_student_join() {   
+
+    rell.test.tx()
+        .op(create_a_student(mock_student_pubkey_1, mock_student_name_1))
+        .op(create_a_course(mock_course_pubkey_1, mock_course_name_1, mock_course_capacity_3))
+        .sign(mock_student_privkey_1) 
+        .op(enroll_for_course(mock_student_pubkey_1, mock_course_pubkey_1))
+        .run();
+
+    rell.test.tx()
+        .op(create_a_student(mock_student_pubkey_2, mock_student_name_1))
+        .sign(mock_student_privkey_2) 
+        .op(enroll_for_course(mock_student_pubkey_2, mock_course_pubkey_1))
+        .run();
+
+    rell.test.tx()
+        .op(create_a_student(mock_student_pubkey_3, mock_student_name_1))
+        .sign(mock_student_privkey_3) 
+        .op(enroll_for_course(mock_student_pubkey_3, mock_course_pubkey_1))
+        .run();
+
+    rell.test.tx()
+        .sign(mock_student_privkey_1) 
+        .op(drop_course_and_enroll_random_student(mock_student_pubkey_1, mock_course_pubkey_1))
+        .run();
+
+    val enrollment = enrollment @* {};
+    val course = course @ { .pubkey == mock_course_pubkey_1 };
+    var waiting_list_size = course_waiting_list @* { .course == course };
+    val student_1 = student @ { .pubkey == mock_student_pubkey_1 };
+    val student_2 = student @ { .pubkey == mock_student_pubkey_2 };
+    val student_3 = student @ { .pubkey == mock_student_pubkey_3 };
+
+    assert_equals(enrollment.size(), 1);
+    assert_equals(waiting_list_size.size(), 1);
+    assert_not_equals(student_1, enrollment[0].student);
+}
+
+
+

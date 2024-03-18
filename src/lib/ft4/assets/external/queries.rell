@@ -1,0 +1,79 @@
+import ^^.assets;
+import acc: ^^.accounts;
+import ^^.utils;
+
+query _get_asset_balances(account_id: byte_array) {
+    return assets.get_asset_balances(account_id);
+}
+
+query get_asset_balances(account_id: byte_array, page_size: integer, page_cursor: text?) {
+    return utils.make_page(
+        assets.get_paginated_asset_balances(account_id, page_size, page_cursor),
+        page_size
+    );
+}
+
+query get_asset_balance(account_id: byte_array, asset_id: byte_array) {
+    return assets.balance @? {
+        .account.id == account_id,
+        .asset.id == asset_id
+    } (
+        asset = extract_asset_data(.asset),
+        amount = .amount
+    );
+}
+
+query get_asset_by_name(name) {
+    return assets.asset @* { name } ( extract_asset_data($) );
+}
+
+query get_assets_by_name(name, page_size: integer, page_cursor: text?) {
+    return utils.make_page(
+        assets.get_paginated_asset_balances_by_name(name, page_size, page_cursor),
+        page_size
+    );
+}
+
+query get_asset_by_id(asset_id: byte_array) {
+    return assets.asset @? { .id == asset_id } ( extract_asset_data($) );
+}
+
+query get_asset_by_symbol(symbol: text) {
+    return assets.asset @? { .symbol == symbol } ( extract_asset_data($) );
+} 
+
+query _get_all_assets() {
+    return assets.asset @* {} ( extract_asset_data($) );
+}
+
+query get_all_assets(page_size: integer, page_cursor: text?) {
+    return utils.make_page(
+        assets.get_all_assets(page_size, page_cursor),
+        page_size
+    );
+}
+
+query get_transfer_history(account_id: byte_array, filter: assets.filter, page_size: integer, page_cursor: text?) {
+    val account = acc.account @? { account_id };
+    if (empty(account)) return null;
+
+    val paginated_transfers = assets.get_paginated_transfers(account, filter, page_size, page_cursor);
+    return utils.make_page(paginated_transfers, page_size);
+}
+
+query get_transfer_history_entry(rowid) {
+    val entry = assets.transfer_history_entry @? { .rowid == rowid };
+    return if (empty(entry)) null else assets.extract_data_from_transfer_history_entry(entry);
+}
+
+function extract_asset_data(assets.asset) {
+    return (
+        id = asset.id,
+        symbol = asset.symbol,
+        name = asset.name,
+        decimals = asset.decimals,
+        brid = asset.issuing_brid,
+        icon_url = asset.icon_url,
+        supply = asset.total_supply
+    );
+}

@@ -1,0 +1,5 @@
+@extendable
+function before_account_registration(ft4_accounts.auth_descriptor, ft4_auth.signature);
+
+@extendable
+function after_account_registration(ft4_accounts.account, ft4_accounts.auth_descriptor, ft4_auth.signature);

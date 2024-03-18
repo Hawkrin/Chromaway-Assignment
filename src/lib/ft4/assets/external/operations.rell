@@ -1,0 +1,51 @@
+import ^^.assets;
+import ^^.auth;
+
+query transfer_auth_data(gtv) = auth.auth_data(["T"], "Do you want to transfer %s from account %s to account %s? Nonce: %s");
+
+function transfer_message(gtv) {
+    val params = struct<transfer>.from_gtv(gtv);
+    val asset = assets.Asset(params.asset_id);
+
+    return "Please sign the message\nto transfer %s %s\n\nfrom:\n{account_id}\n\nto:\n%s\n\nNonce: {nonce}"
+        .format(
+            assets.format_amount_with_decimals(params.amount, asset.decimals),
+            asset.name,
+            params.receiver_id
+        );
+}
+
+@extend(auth.auth_handler)
+function () = auth.add_auth_handler(
+    scope = "ft4.transfer",
+    flags = ["T"],
+    message = transfer_message(*)
+);
+
+operation transfer(receiver_id: byte_array, asset_id: byte_array, amount: big_integer) {
+    val account = auth.authenticate();
+    assets.Unsafe.transfer(account, acc.Account(receiver_id), assets.Asset(asset_id), amount);
+}
+
+@extend(auth.auth_handler)
+function () = auth.add_auth_handler(
+    scope = "ft4.burn",
+    flags = ["T"],
+    message = burn_message(*)
+);
+
+function burn_message(gtv) {
+    val params = struct<burn>.from_gtv(gtv);
+    val asset = assets.Asset(params.asset_id);
+
+    return "Please sign the message\nto burn %s %s\n\nfrom:\n{account_id}\n\nNonce: {nonce}"
+        .format(
+            assets.format_amount_with_decimals(params.amount, asset.decimals),
+            asset.name
+        );
+}
+
+operation burn(asset_id: byte_array, amount: big_integer) {
+    val account = auth.authenticate();
+    assets.Unsafe.burn(account, assets.Asset(asset_id), amount);
+}

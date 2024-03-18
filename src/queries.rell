@@ -1,0 +1,19 @@
+module;
+
+import entities.*;
+
+/*
+* Returns how many students are active in a specific course.
+*/
+query count_students_enrolled_in_course(course_name: text) {
+    val students = enrollment @* { .course.name == course_name } (.student);
+    return students;  
+}
+
+/*
+* Returns how many courses a certain student is attending
+*/
+query get_courses_enrolled_by_student(student_name : text) {
+    val enrolled_courses = enrollment @* { .student.name == student_name } (.course);
+    return enrolled_courses;
+}

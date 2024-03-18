@@ -1,0 +1,142 @@
+module;
+
+import entities.*;
+
+/*
+* Fetching all waiting list entities.
+* Loops over them and decrements all entities positions by 1.
+* Updates all entities with their new position.
+*/
+function decrement_waiting_list_positions(course: course) {
+    val waiting_list = course_waiting_list @* { .course == course };
+    
+    for(waiting_list_entity in waiting_list) {
+        var new_position = waiting_list_entity.position - 1;
+        update course_waiting_list @ { .course == course, .student == waiting_list_entity.student } ( position = new_position );
+    }
+}
+
+/*
+* Fetches the size of the waiting list by its position pointer.
+* Creates a new course_waiting_list and incrementing 
+*/
+function add_student_to_waiting_list(student: student, course: course) {
+    val waiting_list_size = (course_waiting_list @* { .course == course }).size();
+    var last_element = 0;
+
+    if (waiting_list_size == 0) {
+        last_element = 1;
+    } else {
+        last_element = waiting_list_size + 1;
+    }
+    create_course_waiting_list(course, student, last_element);
+}
+
+/*
+* Fetches the current amount of active students.
+* Increments that value by one and then creates a new entity with the new value.
+* Then deletes the older entity.
+*/
+function increment_course_active_students(course: course) {
+    var current_student_count = get_active_students(course);
+    var new_student_count = current_student_count + 1;
+
+    update course_enrollment_count @ { .course == course } ( active_students = new_student_count );  
+}
+
+/*
+*  Returns true if there are still places for this course. False otherwise.
+*/
+function course_has_room(course)
+{
+    var active_students = get_active_students(course);
+    if(active_students >= course.capacity)
+    {
+        return false;
+    }
+    return true;
+}
+
+/*
+* Gets the students of a specified course.
+*/
+function get_active_students(course: course): integer =
+    course_enrollment_count @ { .course == course }.active_students;
+
+
+/*
+* Creates an enrollemen entity
+*/
+function create_enrollment(student: student, course: course) {
+    create enrollment (
+        student = student, 
+        course = course
+    );
+}
+
+/*
+* Creates a student entity
+*/
+function create_student(pubkey, name: text) {
+    create student (
+        pubkey, 
+        name = name
+    );
+}
+
+/*
+* Creates a course_waiting_list entity
+*/
+function create_course_waiting_list(course: course, student: student, position: integer) {
+    create course_waiting_list (
+        course = course,
+        position = position,
+        student = student  
+    );
+}
+
+/*
+* Creates two entities:
+* The first entity holds the standard course information
+* The second is connected via a FK and holds the active_students count which can be updated.
+*/
+function create_course(pubkey, name: text, capacity: integer) {
+    create course (
+        pubkey, 
+        name = name, 
+        capacity = capacity
+    );
+
+    val course = course @ { .name ==  name }; // fetches the right course by name.
+
+    create course_enrollment_count (
+        course = course, 
+        active_students = 0
+    );
+}
+
+/*
+* A pseudo random function which takes in an integer and a pubkey
+*/
+function pseudo_randomness(pubkey: pubkey, max: integer): integer {
+    var hashed_key = crypto.sha256(pubkey);
+    var count = 0;
+    var total = 0;
+    var min = 1;
+
+    // Include block height and last block time for additional randomness
+    var random_modifier = op_context.block_height + op_context.last_block_time;
+
+    for (letter in hashed_key) {
+        total += random_modifier % 256;  // Add randomness to each byte
+        count += 1;
+    }
+    
+    var range = max - min + 1;
+    return min + (total / count) % range;
+}
+
+
+
+
+

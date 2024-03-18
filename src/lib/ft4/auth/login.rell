@@ -1,0 +1,28 @@
+
+val DEFAULT_LOGIN_CONFIG_NAME = "default";
+
+query get_login_config(name? = null) {
+    val configs = login_config();
+    val config_name = name ?: DEFAULT_LOGIN_CONFIG_NAME;
+
+    if (config_name == DEFAULT_LOGIN_CONFIG_NAME) {
+        return if (config_name in configs) configs[config_name] else _login_config(flags = []);
+    }
+    
+    return require(
+        configs.get_or_null(config_name), 
+        "Unknown login configuration <%s>".format(config_name)
+    );
+}
+
+struct _login_config {
+    flags: list<text>;
+}
+
+@extendable
+function login_config(): map<name, _login_config>;
+
+function add_login_config(name = DEFAULT_LOGIN_CONFIG_NAME, flags: list<text>) {
+    return [name: _login_config(flags)];
+}
+

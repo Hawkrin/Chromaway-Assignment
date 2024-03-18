@@ -1,0 +1,236 @@
+import acc: ^.accounts;
+
+entity asset {
+    key id: byte_array;
+    name;
+    key symbol: text;
+    decimals: integer;
+    issuing_brid: byte_array;
+    icon_url: text;
+    mutable total_supply: big_integer;
+}
+
+function Asset(id: byte_array) = require(
+    asset @? { id },
+    "Asset <%s> not found".format(id)
+);
+
+entity balance {
+    key acc.account, asset;
+    mutable amount: big_integer = 0L;
+}
+
+val max_asset_amount = big_integer.from_hex("ff".repeat(32));
+
+function ensure_balance(acc.account, asset): balance {
+    val balance = balance @? {asset, account};
+    if (balance != null) {
+       return balance;
+    }
+    else return create balance(account, asset, amount = 0L);
+}
+
+function get_paginated_asset_balances(account_id: byte_array, page_size: integer, page_cursor: text?): list<utils.pagination_result> {
+    val before_rowid = utils.before_rowid(page_cursor);
+    return balance @* {
+        .account.id == account_id,
+        .rowid > (before_rowid ?: rowid(0))
+    } (
+        utils.pagination_result(
+            data = (
+                asset = (
+                    id = .asset.id,
+                    name = .asset.name,
+                    symbol = .asset.symbol,
+                    decimals = .asset.decimals,
+                    brid = .asset.issuing_brid,
+                    supply = .asset.total_supply,
+                    icon_url = .asset.icon_url
+                ),
+                amount = .amount
+            ).to_gtv_pretty(),
+            rowid = .rowid
+        )
+    ) limit utils.fetch_data_size(page_size);
+}
+
+function get_all_assets(page_size: integer, page_cursor: text?) {
+    val before_rowid = utils.before_rowid(page_cursor);
+    return assets.asset @* {
+        .rowid > (before_rowid ?: rowid(0))
+    } (
+        utils.pagination_result(
+            data = (
+                id = .id,
+                symbol = .symbol,
+                name = .name,
+                decimals = .decimals,
+                brid = .issuing_brid,
+                icon_url = .icon_url,
+                supply = .total_supply
+            ).to_gtv_pretty(),
+            rowid = .rowid
+        )
+    ) limit utils.fetch_data_size(page_size);
+}
+
+function get_asset_balances(account_id: byte_array) {
+    return balance @* { .account.id == account_id } (
+        asset = (
+            id = .asset.id,
+            name = .asset.name,
+            decimals = .asset.decimals,
+            brid = .asset.issuing_brid,
+            supply = .asset.total_supply
+        ),
+        amount = .amount
+    );
+}
+
+function format_amount_with_decimals(amount: big_integer, decimals: integer): text {
+    require(decimals >= 0, "Decimals must be non-negative. Received: %s".format(decimals));
+    var amt = amount.to_text();
+    if (decimals == 0) {
+        return amt;
+    } else if (amt.size() > decimals) {
+        amt = amt.sub(0, amt.size() - decimals) + "." + amt.sub(amt.size() - decimals);
+    } else {
+        amt = "0." + "0".repeat(decimals - amt.size()) + amt;
+    }
+    return amt;
+}
+
+function get_paginated_asset_balances_by_name(name, page_size: integer, page_cursor: text?) {
+    val before_rowid = utils.before_rowid(page_cursor);
+    return assets.asset @* {
+        .name == name,
+        .rowid > (before_rowid ?: rowid(0))
+    } (
+        utils.pagination_result(
+            data = (
+                id = .id,
+                name = .name,
+                symbol = .symbol,
+                decimals = .decimals,
+                brid = .issuing_brid,
+                icon_url = .icon_url,
+                supply = .total_supply
+            ).to_gtv_pretty(),
+            rowid = .rowid
+        )
+    ) limit utils.fetch_data_size(page_size);
+}
+
+function require_zero_exclusive_asset_amount_limits(value: big_integer, name) {
+    require(
+        value <= max_asset_amount, 
+        "%s: value must be lower than 2^256, actual: %d".format(name, value)
+    );
+    require(
+        value > 0L, 
+         "%s: value must be non-zero positive, actual: %d".format(name, value)
+    );
+}
+
+namespace Unsafe {
+    function mint(acc.account, asset, amount: big_integer) {
+        require_zero_exclusive_asset_amount_limits(amount, "Parameter amount");
+        require(
+            asset.issuing_brid == chain_context.blockchain_rid,
+            "Assets can only be minted on issuing chain"
+        );
+        before_mint(account, asset, amount);
+        val balance = ensure_balance(account, asset);
+
+        balance.amount += amount;
+        asset.total_supply += amount;
+
+        require(asset.total_supply <= max_asset_amount, "End total supply must be lower than 2^256");
+
+        create transfer_history_entry(
+            account,
+            asset,
+            .delta = amount,
+            .op_index = op_context.op_index,
+            .is_input = false,
+            .entry_index = 0,
+            transfer_args = [
+                [(
+                    amount, 
+                    account_id = null.to_gtv().to_bytes(), 
+                    entry_index = 0
+                )],
+                [(
+                    amount, 
+                    account_id = account.id,
+                    entry_index = 0
+                )]
+            ].to_gtv().to_bytes()
+        );
+
+        after_mint(account, asset, amount);
+    }
+
+    function burn(acc.account, asset, amount: big_integer) {
+        require_zero_exclusive_asset_amount_limits(amount, "Parameter amount");
+        require(
+            asset.issuing_brid == chain_context.blockchain_rid,
+            "Assets can only be burned on issuing chain"
+        );
+        val balance = balance @ {asset, account};
+        require(balance.amount >= amount, "Insufficient balance");
+
+        before_burn(account, asset, amount);
+
+        balance.amount -= amount;
+        asset.total_supply -= amount;
+
+        create transfer_history_entry (
+            account,
+            asset,
+            .delta = amount,
+            .op_index = op_context.op_index,
+            .is_input = true,
+            .entry_index = 0,
+            transfer_args = [
+                [(
+                    amount, 
+                    account_id = account.id,
+                    entry_index = 0
+                )],
+                [(
+                    amount, 
+                    account_id = null.to_gtv().to_bytes(), 
+                    entry_index = 0
+                )]
+            ].to_gtv().to_bytes()
+        );
+        after_burn(account, asset, amount);
+    }
+
+    function register_asset(
+        name,
+        symbol: text,
+        decimals: integer,
+        blockchain_rid: byte_array,
+        icon_url: text): asset {
+        require(decimals >= 0 and decimals < 79, "Decimals must be between 0 and 78 (included)");
+
+        val trimmed_icon_url = icon_url.trim();
+        require(
+            (trimmed_icon_url == "") or (trimmed_icon_url.size() <= 2048 and trimmed_icon_url.matches('^\\S+:\\/\\/[^\\s$.?#].[^\\s]*$')),
+            "Invalid URL for icon"
+        );
+
+        val id = (name, blockchain_rid).hash();
+        return create asset (
+            id,
+            name,
+            symbol,
+            decimals,
+            issuing_brid=blockchain_rid,
+            icon_url=trimmed_icon_url,
+            total_supply=0L
+        );
+    }
+}

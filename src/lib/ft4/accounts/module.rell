@@ -1,0 +1,238 @@
+@mount('ft')
+module;
+
+struct module_args {
+	rate_limit_active: boolean;
+	rate_limit_max_points: integer;
+    rate_limit_recovery_time: integer;
+    rate_limit_points_at_account_creation: integer;    
+}
+
+import ^.auth;
+import ^.utils;
+
+enum auth_type {
+    S, M, ES, EM,
+}
+
+struct auth_descriptor {
+    auth_type;
+    args: list<gtv>;
+    rules: gtv;
+}
+
+entity account {
+    key id: byte_array;
+}
+
+entity account_meta {
+    meta_key: text;
+    value: byte_array;
+    index account, meta_key;
+    index meta_key, value;
+}
+
+entity account_auth_descriptor {
+    id: byte_array;
+    key account, id;
+    index id;
+    auth_type;
+    args: byte_array;
+    rules: byte_array;
+    mutable ctr: integer;
+}
+
+entity auth_descriptor_participant {
+    key account_auth_descriptor, id: byte_array;
+}
+
+// rate limiter
+entity rl_state {
+    key account;
+    mutable points: integer;
+    mutable last_update: timestamp;
+    mutable max_points: integer;
+    mutable recovery_time: timestamp;
+}
+
+
+function add_auth_descriptor_to_account(account, auth_descriptor): byte_array {
+    val id = auth_descriptor.hash();
+
+    analyze_auth_descriptor_rules(auth_descriptor.rules, 0);
+
+    val account_auth_descriptor = create account_auth_descriptor (
+        account, id,
+        auth_descriptor.auth_type,
+        args = auth_descriptor.args.to_gtv().to_bytes(),
+        rules = auth_descriptor.rules.to_gtv().to_bytes(),
+        0
+    );
+     
+    when (auth_descriptor.auth_type) {
+        S, M -> _add_ft_auth_participant(account, auth_descriptor, account_auth_descriptor);
+        ES, EM -> _add_eth_auth_participant(account, auth_descriptor, account_auth_descriptor);
+    }
+     
+     setup_auth_descriptor_variables(account_auth_descriptor);
+     return id;
+}
+
+function _delete_auth_descriptor(auth_descriptor: account_auth_descriptor) {
+    require(auth_descriptor.account.id != auth_descriptor.id, "Can't delete initial auth descriptor");
+    delete auth_descriptor_rule_variable @* { auth_descriptor };
+    delete auth_descriptor_participant @* { auth_descriptor };
+    delete auth_descriptor;
+}
+
+function _delete_all_auth_descriptors_exclude(auth_descriptor: account_auth_descriptor) {
+    delete (adrv: auth_descriptor_rule_variable, ad: account_auth_descriptor) @* {
+        ad.account == auth_descriptor.account,
+        ad.id != auth_descriptor.account.id,
+        ad.id != auth_descriptor.id,
+        adrv.account_auth_descriptor == ad    
+    };
+    delete (adp: auth_descriptor_participant, ad: account_auth_descriptor) @* {
+        ad.account == auth_descriptor.account,
+        ad.id != auth_descriptor.account.id,
+        ad.id != auth_descriptor.id,
+        adp.account_auth_descriptor == ad
+    };
+    delete account_auth_descriptor @* {
+       .account == auth_descriptor.account,
+       .id != auth_descriptor.account.id,
+       .id != auth_descriptor.id
+    };
+}
+
+function create_account_with_auth(auth_descriptor): byte_array {
+    require(auth_descriptor.rules == null.to_gtv(), "Cannot create an account with a restricted auth descriptor");
+    
+    val id = auth_descriptor.hash();
+    val acc = create account (id);
+
+    add_auth_descriptor_to_account(acc, auth_descriptor);
+
+    val max_points = chain_context.args.rate_limit_max_points;
+    val recovery_time = chain_context.args.rate_limit_recovery_time;
+    val points_at_start = chain_context.args.rate_limit_points_at_account_creation;
+    
+    create rl_state(acc, .points = points_at_start, .last_update = op_context.last_block_time, max_points, recovery_time);
+    
+    return id;
+}
+
+function _add_ft_auth_participant(account, auth_descriptor, account_auth_descriptor) {
+    val participants = get_participants(auth_descriptor.auth_type, auth_descriptor.args.to_gtv().to_bytes());
+    require(op_context.get_signers().size() >= participants.size(), "Too few transaction signers");
+    for (participant in participants) {
+        require(op_context.is_signer(participant), "One participant in the Auth Desc didn't sign this transaction.");
+        create auth_descriptor_participant(account_auth_descriptor, id = participant);
+    }
+}
+
+function _add_eth_auth_participant(account, auth_descriptor, account_auth_descriptor) {
+    for (participant in get_participants(auth_descriptor.auth_type, auth_descriptor.args.to_gtv().to_bytes())) {
+        create auth_descriptor_participant(account_auth_descriptor, id = participant);
+    }
+}
+
+function _auth(account: account, auth_descriptor: account_auth_descriptor, required_flags: list<text>) {
+    rate_limit(account);
+    require_auth(account, auth_descriptor, required_flags);
+}
+
+function auth_descriptor_by_id(account, id: byte_array) = require(
+    account_auth_descriptor @? { account, id },
+    "Auth descriptor '%s' not found for account '%s'".format(id, account.id)
+);
+
+function account_by_id(id: byte_array) = require(
+    account @? { id },
+    "Account not found: '%s'".format(id)
+);
+
+function single_sig_auth_descriptor(pubkey, flags: set<text>) = auth_descriptor(
+    auth_type = auth_type.S,
+    args = [
+        flags.to_gtv(),
+        pubkey.to_gtv()
+    ],
+    null.to_gtv()
+);
+
+function get_paginated_auth_descriptors(id: byte_array, page_size: integer, page_cursor: text?) {
+    val before_rowid = utils.before_rowid(page_cursor);
+    return account_auth_descriptor @* {
+        .account.id == id,
+        .rowid > (before_rowid ?: rowid(0))
+    } (
+        utils.pagination_result(
+            data = (
+                auth_type = .auth_type,
+                args = gtv.from_bytes(.args),
+                rules = gtv.from_bytes(.rules)
+            ).to_gtv_pretty(),
+            rowid = .rowid
+        )
+    ) limit utils.fetch_data_size(page_size);
+}
+
+function get_paginated_accounts_by_ad_id(id: byte_array, page_size: integer, page_cursor: text?) {
+    val before_rowid = utils.before_rowid(page_cursor);
+    return account_auth_descriptor @* {
+        .id == id,
+        .rowid > (before_rowid ?: rowid(0))
+    } (
+        utils.pagination_result(
+            data=.account.id.to_gtv_pretty(),
+            rowid=.rowid
+        )
+    ) limit utils.fetch_data_size(page_size);
+}
+
+namespace Unsafe {
+    //WARNING: doesn't check that the account is being created by the owner(s)
+    function create_account_with_auth(auth_descriptor): byte_array {
+        require(auth_descriptor.rules == null.to_gtv(), "Cannot create an account with a restricted auth descriptor");
+        val id = auth_descriptor.hash();
+        val acc = create account (id);
+        _add_auth_descriptor(
+            acc, auth_descriptor
+        );
+        val max_points = chain_context.args.rate_limit_max_points;
+        val recovery_time = chain_context.args.rate_limit_recovery_time;
+        val points_at_start = chain_context.args.rate_limit_points_at_account_creation;
+        
+        create rl_state(acc, .points = points_at_start, .last_update = op_context.last_block_time, max_points, recovery_time);
+        
+        return id;
+    }
+
+    //WARNING: doesn't check that the auth_descriptor is being added by the participant(s) nor owner(s)
+    function _add_auth_descriptor(account, auth_descriptor): byte_array {
+        val id = auth_descriptor.hash();
+        
+        analyze_auth_descriptor_rules(auth_descriptor.rules, 0);
+     
+        when (auth_descriptor.auth_type) {
+            S, ES -> single_sig_args.from_gtv(auth_descriptor.args.to_gtv());
+            M, EM -> multi_sig_args.from_gtv(auth_descriptor.args.to_gtv());
+        }
+        
+        val account_auth_descriptor = create account_auth_descriptor (
+            account, id,
+            auth_descriptor.auth_type,
+            args = auth_descriptor.args.to_gtv().to_bytes(),
+            rules = auth_descriptor.rules.to_gtv().to_bytes(),
+            0
+        );
+        
+        for (participant in get_participants(auth_descriptor.auth_type, auth_descriptor.args.to_gtv().to_bytes())) {
+            create auth_descriptor_participant(account_auth_descriptor, id = participant);
+        }
+        
+        setup_auth_descriptor_variables(account_auth_descriptor);
+        return id;
+    }
+}

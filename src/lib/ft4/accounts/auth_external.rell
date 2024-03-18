@@ -1,0 +1,162 @@
+
+struct eth_auth_args {
+    account;
+    account_auth_descriptor;
+    signatures: list<auth.signature>;
+}
+
+function AuthDescriptor(id: byte_array) = require(
+    account_auth_descriptor @? { id },
+    "Provided auth descriptor id does not exist %s".format(id)
+);
+
+function Account(id: byte_array) = require(
+    account @? { id },
+    "Account not found: %s".format(id)
+);
+
+// TODO: Merge with `authenticate` function.
+function _authenticate(required_flags: set<text>, message_template: text? = null): account {
+    require(op_context.op_index > 0, "Expected at least two operations");
+
+    val previous_op = op_context.get_all_operations()[op_context.op_index - 1];
+    require(
+        previous_op.name in ["ft4.evm_auth", "ft4.ft_auth"],
+        "Error authenticating operation. Incorrect auth operation %s".format(previous_op.name)
+    );
+
+    val account = when (previous_op.name) {
+        "ft4.evm_auth" -> _validate_eth_signature(previous_op, required_flags, message_template);
+        "ft4.ft_auth" -> _validate_ft4_signature(previous_op.args, required_flags);
+        else -> null;
+    };
+
+    val valid_account = require(account, "Invalid auth operation: %s".format(previous_op.name));
+
+    rate_limit(valid_account);
+
+    return valid_account;
+}
+
+function _validate_eth_signature(auth_op: gtx_operation, required_flags: set<text>, auth_message_template: text?): account {
+    val validated_args = _validate_eth_arguments(auth_op.args, required_flags);
+    val op_to_auth = op_context.get_all_operations()[op_context.op_index];
+    val template = auth_message_template ?: auth.generate_auth_message_template(chain_context.blockchain_rid, op_to_auth);
+    val message = create_message_from_template(
+        validated_args, 
+        template, 
+        op_to_auth.args, 
+        validated_args.account_auth_descriptor.ctr
+    );
+
+    var recovered_keys = 
+        if (validated_args.account_auth_descriptor.auth_type in [auth_type.ES, auth_type.S]) [_recover_eth_key(message, validated_args.signatures[0], validated_args.account_auth_descriptor.id)] 
+        else _recover_multiple_eth_keys(message, validated_args.signatures, validated_args.account_auth_descriptor);
+    
+    validated_args.account_auth_descriptor.ctr += 1;
+    
+    return validated_args.account;
+}
+
+function create_message_from_template(eth_auth_args, message_template: text, args: list<gtv>, ctr: integer): text {
+    require(message_template.contains("{nonce}"), "Message template has to include '{nonce}'");
+    var message = message_template;
+    
+    // TODO: check if this is still needed
+    for (i in range(args.size())) {
+        message = message.replace("{%d}".format(i), "%s".format(args[i]).replace("\"", ""));
+    }
+    
+    return message
+        .replace("{account_id}", eth_auth_args.account.id.to_hex())
+        .replace("{auth_descriptor_id}", eth_auth_args.account_auth_descriptor.id.to_hex())
+        .replace("{nonce}", ctr.to_text().replace("\"", ""));
+}
+
+function _validate_eth_arguments(auth_args: list<gtv>, required_flags: set<text>): eth_auth_args {
+    require(auth_args.size() == 3, "Incorrect number of arguments to auth operation");
+
+    val account_id = byte_array.from_gtv(auth_args[0]);
+    val auth_descriptor_id = byte_array.from_gtv(auth_args[1]);
+    val signatures = list<auth.signature>.from_gtv(auth_args[2]);
+
+    val account = Account(account_id);
+    
+    val auth_descriptor = require(
+        account_auth_descriptor @? { .id == auth_descriptor_id, .account == account },
+        "Auth descriptor '%s' not found for account '%s'".format(auth_descriptor_id, account_id)
+    );
+
+    require(is_valid(auth_descriptor));
+    
+    val has_all_flags = when (auth_descriptor.auth_type) {
+        S, ES -> single_sig_args.from_bytes(auth_descriptor.args).flags.contains_all(required_flags);
+        M, EM -> multi_sig_args.from_bytes(auth_descriptor.args).flags.contains_all(required_flags);
+    };
+    
+    require(has_all_flags, "The auth descriptor does not have the required permissions");
+
+    return eth_auth_args(account, auth_descriptor, signatures);
+}
+
+function _recover_multiple_eth_keys(message: text, signatures: list<auth.signature>, account_auth_descriptor) {
+    var recovered_keys = list<byte_array>();
+    for (i in range(signatures.size())) {
+        recovered_keys.add(
+            _recover_eth_key(
+                message,
+                signatures[i],
+                account_auth_descriptor.id
+            )
+        );
+    }
+    require(
+        recovered_keys.size() >= multi_sig_args.from_bytes(account_auth_descriptor.args).signatures_required, 
+        "Minimum number of valid signatures not reached"
+    );
+    return recovered_keys;
+}
+
+function _recover_eth_key(message: text, auth.signature, auth_descriptor_id: byte_array) {
+    require(message != "", "Empty messages are not allowed");
+
+    val msg_hash = keccak256(("\u0019Ethereum Signed Message:\n" + message.size().to_text() + message).to_bytes());
+    val eth_pubkey = eth_ecrecover(
+        signature.r,
+        signature.s,
+        signature.v - 27,
+        msg_hash
+    );
+
+    val recovered_address = keccak256(eth_pubkey).sub(12);
+    val participant = auth_descriptor_participant @? {
+        .account_auth_descriptor.id == auth_descriptor_id,
+        .id == recovered_address
+    };
+    require(participant, "Invalid signature");
+
+    return recovered_address;
+}
+
+function _validate_ft4_signature(auth_args: list<gtv>, required_flags: set<text>): account {
+    val account_id = byte_array.from_gtv(auth_args[0]);
+    val auth_descriptor_id = byte_array.from_gtv(auth_args[1]);
+
+    val account = Account(account_id);
+    val external_keys = auth_descriptor_participant @* {
+        .account_auth_descriptor.account == account,
+        .account_auth_descriptor.id == auth_descriptor_id, 
+        .id in op_context.get_signers()
+    };
+
+    require(external_keys.size() > 0, "The provided key(s) is not a signer of this auth descriptor");
+    for (external in external_keys) {
+        require_auth(
+            external.account_auth_descriptor.account,
+            external.account_auth_descriptor,
+            list(required_flags)
+        );
+    }
+
+    return account;
+}

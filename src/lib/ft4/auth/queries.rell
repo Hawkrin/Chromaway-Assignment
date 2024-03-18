@@ -1,0 +1,11 @@
+
+query get_auth_flags(op_name: name) = get_auth_handler(op_name).flags;
+
+query get_auth_message_template(op_name: name, op_args: gtv) {
+    val formatter = get_auth_handler(op_name).message_formatter;
+
+    return if (formatter??) formatter(op_args) else generate_auth_message_template(chain_context.blockchain_rid, gtx_operation(
+        name = op_name,
+        args = list<gtv>.from_gtv(op_args)
+    ));
+}

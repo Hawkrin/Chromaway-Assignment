@@ -1,0 +1,12 @@
+/*
+ * For complex validation we might not want to use simple "require()"
+ * but an error message that is returned. 
+ */
+struct validation_result {
+    valid: boolean;
+    error: text? = null;
+}
+
+val VALID = validation_result(true, null);
+
+function invalid(error: text) = validation_result(false, error);

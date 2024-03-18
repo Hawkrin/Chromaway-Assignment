@@ -1,0 +1,61 @@
+import acc: ^.accounts;
+
+struct xfer_input {
+   account_id: byte_array;
+   asset_id: byte_array;
+   auth_descriptor_id: byte_array;
+   amount: big_integer;
+   extra: map<text, gtv>;
+}
+
+struct xfer_output {
+   account_id: byte_array;
+   asset_id: byte_array;
+   amount: big_integer;
+   extra: map<text, gtv>;
+}
+
+function deduct_balance(acc.account, asset, amount: big_integer) {
+    val balance = balance @ { account, asset };
+    require(balance.amount >= amount, "Balance is too low");
+    balance.amount -= amount;
+}
+
+namespace Unsafe {
+   
+   function transfer(from: acc.account, to: acc.account, assets.asset, amount: big_integer) {
+      require_zero_exclusive_asset_amount_limits(amount, "Parameter amount");
+      require(from != to, "Sender and receiver have to be different");
+
+      val args = [
+         [(amount, from.id, 0)],
+         [(amount, to.id, 0)]
+      ];
+
+      before_transfer(from, to, asset, amount);
+
+      deduct_balance(from, asset, amount);
+      create transfer_history_entry(
+         .account = from,
+         .asset = asset,
+         .delta = amount,
+         .op_index = op_context.op_index,
+         .is_input = true,
+         .entry_index = 0,
+         .transfer_args = args.to_gtv().to_bytes()
+      );
+      
+      ensure_balance(to, asset).amount += amount;
+      create transfer_history_entry(
+         .account = to,
+         .asset = asset,
+         .delta = amount,
+         .op_index = op_context.op_index,
+         .is_input = false,
+         .entry_index = 0,
+         .transfer_args = args.to_gtv().to_bytes()
+      );
+
+      after_transfer(from, to, asset, amount);
+   }
+}
